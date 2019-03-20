@@ -60,12 +60,18 @@ public sealed class CirclePhysicsManager : MonoBehaviour
     const float gridUnitSize = cellGridSize * cellUnitSize;
     const float halfGridUnitSize = gridUnitSize / 2f;
 
+    const int asteroidsCheckedForRespawnPerFrame = 5120;
+
     public bool simulate = true;    //set to false to stop collision detection
     public Transform playerTransform { get; private set; }
 
     CircleCollider[] colliders = new CircleCollider[numberOfObjects];           //list of all colliders
+    CircleCollider[] asteroids = new CircleCollider[numberOfAsteroids];         //list of all asteroids
     List<CircleCollider>[] cells = new List<CircleCollider>[cellNumber];        //array of lists containing colliders which are currently in given cells
     List<CircleCollider>[] startCells = new List<CircleCollider>[cellNumber];   //used to skip reassigning cells at game restart
+
+    //use floats to store time because coroutines allocate memory whenever they are called
+    Dictionary<CircleCollider, float> asteroidRespawnTimers = new Dictionary<CircleCollider, float>(numberOfAsteroids);
 
     //cells are defined by their maximum and minimum x and y coordinates
     Vector3[] cellMaximums = new Vector3[cellNumber];
@@ -122,7 +128,8 @@ public sealed class CirclePhysicsManager : MonoBehaviour
                 cellMaximums[(y * cellGridSize) + x] = new Vector3(halfGridUnitSize - (gridUnitSize - (x * cellUnitSize)), halfGridUnitSize - (gridUnitSize - (y * cellUnitSize)));
                 cellMinimums[(y * cellGridSize) + x] = new Vector3(halfGridUnitSize - ((gridUnitSize - ((x - 1) * (cellUnitSize))) + cellOverlap), halfGridUnitSize - ((gridUnitSize - ((y - 1) * (cellUnitSize))) + cellOverlap));
             }
-        }        
+        }
+       
     }
     
     //called by CircleCollider in it's constructor
@@ -137,6 +144,7 @@ public sealed class CirclePhysicsManager : MonoBehaviour
     {
         if(colliders[numberOfObjects-1] == null) { return; }    //wait until all objects add themselfes to this array
 
+        int asteroidId = 0;
         //assign playerTransform
         foreach(CircleCollider c in colliders)
         {
@@ -144,6 +152,11 @@ public sealed class CirclePhysicsManager : MonoBehaviour
             {
                 playerTransform = c.transform;
                 AsteroidManager.singleton.playerTransform = c.transform;
+            }else if (c.isAsteroid)
+            {
+                asteroids[asteroidId] = c;
+                asteroidRespawnTimers.Add(c, 0f);
+                asteroidId++;
             }
         }
 
@@ -166,6 +179,7 @@ public sealed class CirclePhysicsManager : MonoBehaviour
         initialized = true;
     }
 
+    int asteroidsCheckedForRespawn = asteroidsCheckedForRespawnPerFrame;
     void Update()
     {
         if (!initialized)
@@ -173,6 +187,17 @@ public sealed class CirclePhysicsManager : MonoBehaviour
             LateStart();
             return;
         }
+
+        //check if any asteroids should be respawned
+        if (asteroidsCheckedForRespawn >= numberOfAsteroids) { asteroidsCheckedForRespawn = asteroidsCheckedForRespawnPerFrame; }
+        for (int i=0; i<asteroidsCheckedForRespawn; i++) {
+            if (asteroidRespawnTimers[asteroids[i]] == 0f) { continue; }
+            if(Time.timeSinceLevelLoad - asteroidRespawnTimers[asteroids[i]] > respawnTime)
+            {
+                RespawnAsteroidNow(asteroids[i]);
+            }
+        }
+        asteroidsCheckedForRespawn += asteroidsCheckedForRespawnPerFrame;
 
         playerCells.Clear();
         //check which colliders left their cells, remove them from those cell's lists and assign them to their current cells
@@ -454,18 +479,26 @@ public sealed class CirclePhysicsManager : MonoBehaviour
         }
         //reset asteroids' positions
         AsteroidManager.singleton.Restart();
+
+        //reset respawn timers
+        foreach(CircleCollider c in colliders)
+        {
+            if(!c.isPlayer && c.isAsteroid)
+            {
+                asteroidRespawnTimers[c] = 0f;
+            }
+        }
         simulate = true;
     }
 
     bool isTooClose;
     public void RespawnAsteroid(CircleCollider collider)
     {
-        StartCoroutine(IERespawnAsteroid(collider));
+        asteroidRespawnTimers[collider] = Time.timeSinceLevelLoad;
     }
-    
-    IEnumerator IERespawnAsteroid(CircleCollider collider)
+
+    void RespawnAsteroidNow(CircleCollider collider)
     {
-        yield return new WaitForSeconds(respawnTime);
         do
         {
             isTooClose = false;
@@ -479,6 +512,7 @@ public sealed class CirclePhysicsManager : MonoBehaviour
         collider.position = cellMinimums[randomCellId] + asteroidRespawnVector + randomRespawnVector;
         cells[randomCellId].Add(collider);
         collider.detect = true;
+        asteroidRespawnTimers[collider] = 0f;
     }
 
     public void AssignSameCellAsPlayer(CircleCollider collider)

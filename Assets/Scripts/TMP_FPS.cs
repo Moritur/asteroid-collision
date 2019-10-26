@@ -21,8 +21,14 @@ public sealed class TMP_FPS : MonoBehaviour
         style.normal.textColor = new Color(0.0f, 0.0f, 0.5f, 1.0f);
     }
 
+    const int framesToIgnore = 100;
+    int ignoredFrames = 0;
     void Update()
     {
+        ignoredFrames++;
+        if (ignoredFrames < framesToIgnore) return;
+
+        ignoredFrames = 0;
         deltaTime = Time.unscaledDeltaTime;
     }
 

@@ -1,6 +1,7 @@
 ﻿using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using System.Threading.Tasks;
 
 /*
  * In this game only two types of colliders are used - one for asteroid and one for bullet.
@@ -34,6 +35,8 @@ public sealed class CirclePhysicsManager : MonoBehaviour
 {
     public static CirclePhysicsManager singleton;
 
+    public float timeSinceLevelLoad { get; private set; }
+
     //moved from Asteroid class
     public const float gridUnit = 3f;          //width an height of grid tile
     public const int gridSize = 160;
@@ -57,6 +60,7 @@ public sealed class CirclePhysicsManager : MonoBehaviour
     public const int numberOfAsteroids = gridSize * gridSize;
     const int numberOfObjects = gridSize * gridSize + ShipControl.maxBullets + 1;//+1 is player
     const int cellNumber = cellGridSize * cellGridSize;  //total number of cells
+    const int cellNumberMinOne = cellNumber - 1;  //total number of cells minus one
     const float gridUnitSize = cellGridSize * cellUnitSize;
     const float halfGridUnitSize = gridUnitSize / 2f;
 
@@ -80,7 +84,7 @@ public sealed class CirclePhysicsManager : MonoBehaviour
     //keep track of cells in which player currently is to assign bullets to those cells after they are teleported back to player
     List<int> playerCells = new List<int>(5);
 
-    Vector3 distanceVector;                 //used in collision detection
+    //Vector3 distanceVector;                 //used in collision detection
     bool isAssigned;                        //used to exit cell assigning loop early
     List<int> toRemove = new List<int>(5);  //used to remove colliders that left cell from this cell's collider list
     bool assignedenything;                  //used to check if collider just moved to one of nearby cells or teleported
@@ -129,9 +133,9 @@ public sealed class CirclePhysicsManager : MonoBehaviour
                 cellMinimums[(y * cellGridSize) + x] = new Vector3(halfGridUnitSize - ((gridUnitSize - ((x - 1) * (cellUnitSize))) + cellOverlap), halfGridUnitSize - ((gridUnitSize - ((y - 1) * (cellUnitSize))) + cellOverlap));
             }
         }
-       
+
     }
-    
+
     //called by CircleCollider in it's constructor
     public void AddCircleCollider(CircleCollider collider)
     {
@@ -142,17 +146,18 @@ public sealed class CirclePhysicsManager : MonoBehaviour
 
     void LateStart()
     {
-        if(colliders[numberOfObjects-1] == null) { return; }    //wait until all objects add themselfes to this array
+        if (colliders[numberOfObjects - 1] == null) { return; }    //wait until all objects add themselfes to this array
 
         int asteroidId = 0;
         //assign playerTransform
-        foreach(CircleCollider c in colliders)
+        foreach (CircleCollider c in colliders)
         {
             if (c.isPlayer)
             {
                 playerTransform = c.transform;
                 AsteroidManager.singleton.playerTransform = c.transform;
-            }else if (c.isAsteroid)
+            }
+            else if (c.isAsteroid)
             {
                 asteroids[asteroidId] = c;
                 asteroidRespawnTimers.Add(c, 0f);
@@ -188,20 +193,30 @@ public sealed class CirclePhysicsManager : MonoBehaviour
             return;
         }
 
+        #region respawn
+
+        UnityEngine.Profiling.Profiler.BeginSample("respawn");
         //check if any asteroids should be respawned
         if (asteroidsCheckedForRespawn >= numberOfAsteroids) { asteroidsCheckedForRespawn = asteroidsCheckedForRespawnPerFrame; }
-        for (int i=0; i<asteroidsCheckedForRespawn; i++) {
+        for (int i = 0; i < asteroidsCheckedForRespawn; i++)
+        {
             if (asteroidRespawnTimers[asteroids[i]] == 0f) { continue; }
-            if(Time.timeSinceLevelLoad - asteroidRespawnTimers[asteroids[i]] > respawnTime)
+            if (Time.timeSinceLevelLoad - asteroidRespawnTimers[asteroids[i]] > respawnTime)
             {
                 RespawnAsteroidNow(asteroids[i]);
             }
         }
         asteroidsCheckedForRespawn += asteroidsCheckedForRespawnPerFrame;
+        UnityEngine.Profiling.Profiler.EndSample();
+
+        #endregion
+
+        #region update cells
+        UnityEngine.Profiling.Profiler.BeginSample("cells");
 
         playerCells.Clear();
         //check which colliders left their cells, remove them from those cell's lists and assign them to their current cells
-        for (int i=0; i<cellNumber; i++)
+        for (int i = 0; i < cellNumber; i++)
         {
             if (cells[i].Count > 0)
             {
@@ -220,20 +235,33 @@ public sealed class CirclePhysicsManager : MonoBehaviour
                 }
                 if (toRemove.Count > 0)
                 {
-                    for (int j = toRemove.Count-1; j >= 0; j--)
+                    for (int j = toRemove.Count - 1; j >= 0; j--)
                     {
                         cells[i].RemoveAt(toRemove[j]);
                     }
                 }
             }
         }
-        //check for collisions
+        UnityEngine.Profiling.Profiler.EndSample();
+
+        #endregion
+
+        #region check for collisions
+        UnityEngine.Profiling.Profiler.BeginSample("collide");
+
+        timeSinceLevelLoad = Time.timeSinceLevelLoad;
+
         if (simulate)
         {
-            for (int cellId = 0; cellId < cellNumber; cellId++)
-            {
-                if (cells[cellId].Count < 2) { continue; }
+            // TO DO: Benchmark single (current implementation) vs multiple cells per Paralell.For iteration
 
+            //for (int cellId = 0; cellId < cellNumber; cellId++)
+            Parallel.For(0, cellNumberMinOne, (int cellId) =>
+            {
+                if (cells[cellId].Count < 2) { return; }
+
+                Vector3 distanceVector;
+                
                 for (int i = 0; i < cells[cellId].Count; i++)
                 {
                     if (!cells[cellId][i].detect) { continue; }
@@ -248,17 +276,17 @@ public sealed class CirclePhysicsManager : MonoBehaviour
                             {
                                 if (Vector3.Dot(distanceVector, distanceVector) <= asteroidAsteroid)
                                 {
-                                    cells[cellId][i].OnCollision.Invoke();
-                                    cells[cellId][j].OnCollision.Invoke();
+                                    cells[cellId][i].Collide();
+                                    cells[cellId][j].Collide();
                                 }
                             }
                             else
                             {
-                                if (cells[cellId][i].isPlayer) { continue; }    //player shouldn't collide with his own bullets
+                                if (cells[cellId][i].isPlayer) { continue; }    //player shouldn't collide with their own bullets
                                 if (Vector3.Dot(distanceVector, distanceVector) <= asteroidBullet)
                                 {
-                                    cells[cellId][i].OnCollision.Invoke();
-                                    cells[cellId][j].OnCollision.Invoke();
+                                    cells[cellId][i].Collide();
+                                    cells[cellId][j].Collide();
                                 }
                             }
                         }
@@ -274,8 +302,8 @@ public sealed class CirclePhysicsManager : MonoBehaviour
                                 distanceVector = cells[cellId][i].position - cells[cellId][j].position;
                                 if (Vector3.Dot(distanceVector, distanceVector) <= asteroidBullet)
                                 {
-                                    cells[cellId][i].OnCollision.Invoke();
-                                    cells[cellId][j].OnCollision.Invoke();
+                                    cells[cellId][i].Collide();
+                                    cells[cellId][j].Collide();
                                 }
                             }
                             else
@@ -286,7 +314,12 @@ public sealed class CirclePhysicsManager : MonoBehaviour
                     }
                 }
             }
+            );
         }
+
+        UnityEngine.Profiling.Profiler.EndSample();
+
+        #endregion
     }
 
     //check if point is in box defined by min and max, but remember that cells at the edges are infinite
@@ -360,7 +393,7 @@ public sealed class CirclePhysicsManager : MonoBehaviour
     //checki if collider is in cell (x and y are grid coordinates)
     bool IsInCell(int x, int y, CircleCollider collider)
     {
-        if(x<0 || x>=cellGridSize || y < 0 || y >= cellGridSize)
+        if (x < 0 || x >= cellGridSize || y < 0 || y >= cellGridSize)
         {
             //return false when cell doesn't exist
             return false;
@@ -373,58 +406,58 @@ public sealed class CirclePhysicsManager : MonoBehaviour
             cellPosition = CellPosition.inside;
         }
         else if (y == 0)
-            {
-                if (x != 0 && x != cellGridSize - 1)
-                {
-                    cellPosition = CellPosition.down;
-                }
-                else if (x == 0)
-                {
-                    cellPosition = CellPosition.leftDown;
-                }
-                else
-                {
-                    cellPosition = CellPosition.rightDown;
-                }
-            }
-            else if (x == 0)
-            {
-                if (y != cellGridSize - 1)
-                {
-                    cellPosition = CellPosition.left;
-                }
-                else
-                {
-                    cellPosition = CellPosition.leftUp;
-                }
-            }
-            else if (y == cellGridSize - 1)
-            {
-                if (x != cellGridSize - 1)
-                {
-                    cellPosition = CellPosition.up;
-                }
-                else
-                {
-                    cellPosition = CellPosition.rightUp;
-                }
-            }
-            else
+        {
+            if (x != 0 && x != cellGridSize - 1)
             {
                 cellPosition = CellPosition.down;
             }
+            else if (x == 0)
+            {
+                cellPosition = CellPosition.leftDown;
+            }
+            else
+            {
+                cellPosition = CellPosition.rightDown;
+            }
+        }
+        else if (x == 0)
+        {
+            if (y != cellGridSize - 1)
+            {
+                cellPosition = CellPosition.left;
+            }
+            else
+            {
+                cellPosition = CellPosition.leftUp;
+            }
+        }
+        else if (y == cellGridSize - 1)
+        {
+            if (x != cellGridSize - 1)
+            {
+                cellPosition = CellPosition.up;
+            }
+            else
+            {
+                cellPosition = CellPosition.rightUp;
+            }
+        }
+        else
+        {
+            cellPosition = CellPosition.down;
+        }
 
-            return IsInCell(cellMinimums[(y * cellGridSize) + x], cellMaximums[(y * cellGridSize) + x], collider.position, cellPosition);
+        return IsInCell(cellMinimums[(y * cellGridSize) + x], cellMaximums[(y * cellGridSize) + x], collider.position, cellPosition);
     }
 
     //check if collider is in cell (id is cell's id in cells array)
-    bool IsInCell (int id, CircleCollider collider)
+    bool IsInCell(int id, CircleCollider collider)
     {
         return IsInCell(id % cellGridSize, id / cellGridSize, collider);
     }
 
     //iterate through all cells and add collider to those in which it currently is
-    void AssignCells(CircleCollider collider, bool checkNearby=true)
+    void AssignCells(CircleCollider collider, bool checkNearby = true)
     {
         isAssigned = false;
         for (int y = 0; y < cellGridSize && !isAssigned; y++)
@@ -448,12 +481,12 @@ public sealed class CirclePhysicsManager : MonoBehaviour
     //check cells around previousCell and add collider to those in which it currently is
     void AssignCells(CircleCollider collider, int previousCell)
     {
-        for(int y=-1; y<2; y++)
+        for (int y = -1; y < 2; y++)
         {
-            for(int x=-1; x<2; x++)
+            for (int x = -1; x < 2; x++)
             {
                 if (x == 0 && y == 0) { continue; }
-                if(IsInCell(previousCell+((y * cellGridSize) + x), collider))
+                if (IsInCell(previousCell + ((y * cellGridSize) + x), collider))
                 {
 
                     if (!cells[(previousCell + ((y * cellGridSize) + x))].Contains(collider))
@@ -481,9 +514,9 @@ public sealed class CirclePhysicsManager : MonoBehaviour
         AsteroidManager.singleton.Restart();
 
         //reset respawn timers
-        foreach(CircleCollider c in colliders)
+        foreach (CircleCollider c in colliders)
         {
-            if(!c.isPlayer && c.isAsteroid)
+            if (!c.isPlayer && c.isAsteroid)
             {
                 asteroidRespawnTimers[c] = 0f;
             }
@@ -494,7 +527,7 @@ public sealed class CirclePhysicsManager : MonoBehaviour
     bool isTooClose;
     public void RespawnAsteroid(CircleCollider collider)
     {
-        asteroidRespawnTimers[collider] = Time.timeSinceLevelLoad;
+        asteroidRespawnTimers[collider] = timeSinceLevelLoad;
     }
 
     void RespawnAsteroidNow(CircleCollider collider)
@@ -517,7 +550,7 @@ public sealed class CirclePhysicsManager : MonoBehaviour
 
     public void AssignSameCellAsPlayer(CircleCollider collider)
     {
-        for(int i=0; i<playerCells.Count; i++)
+        for (int i = 0; i < playerCells.Count; i++)
         {
             if (!cells[playerCells[i]].Contains(collider))
             {

@@ -19,6 +19,7 @@ public class ShipControl : MonoBehaviour
 #pragma warning restore CS0649
 
     bool isDead = false;
+    bool mustDie = false;
     Bullet[] bulletComponents = new Bullet[maxBullets];
     int currentBullet = 0;
     Vector3 startPosition;
@@ -51,12 +52,21 @@ public class ShipControl : MonoBehaviour
     {
         if (!isDead)
         {
+            if (mustDie)
+            {
+                Die();
+                return;
+            }
+
             Movement();
 
             for(int i=0; i< maxBullets; i++)
             {
                 bulletComponents[i].transform.Translate(Vector3.up*bulletSpeed*Time.deltaTime);
+                bulletComponents[i].CachePosition();
+                if (bulletComponents[i].disableRenderer) bulletComponents[i].DisableRendererComponent();
             }
+            circleCollider.CachePosition();
         }
     }
 
@@ -74,14 +84,12 @@ public class ShipControl : MonoBehaviour
         }
     }
 
-    public void OnCollision()
-    {
-            Die();
-    }
+    public void OnCollision() => mustDie = true;
 
     void Die()
     {
         isDead = true;
+        mustDie = false;
         StopAllCoroutines();
         spriteRenderer.enabled = false;
         GameManager.singleton.GameOver();

@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 using System.Threading.Tasks;
+using System.Collections.Concurrent;
 
 /*
  * In this game only two types of colliders are used - one for asteroid and one for bullet.
@@ -86,7 +87,10 @@ public sealed class CirclePhysicsManager : MonoBehaviour
 
     //Vector3 distanceVector;                 //used in collision detection
     bool isAssigned;                        //used to exit cell assigning loop early
-    List<int> toRemove = new List<int>(5);  //used to remove colliders that left cell from this cell's collider list
+    //List<int> toRemove = new List<int>(5);  //used to remove colliders that left cell from this cell's collider list
+    List<int>[] toRemoves = new List<int>[cellNumber]; //each cell's list of colliders which have just left it
+    ConcurrentBag<CircleCollider>[] toAdds = new ConcurrentBag<CircleCollider>[cellNumber]; //allows synchronization of adds to lists of colliders in cells
+    CircleCollider[] temporaryToAdds = new CircleCollider[cellNumber]; //allows avoiding allocations when processing toAdds
     bool assignedenything;                  //used to check if collider just moved to one of nearby cells or teleported
     Vector3 asteroidRespawnVector = new Vector3(1f, 3f);//used to respawn asteroids inside cells
     int randomCellId;                       //used to randomize asteroid's respawn position
@@ -122,6 +126,8 @@ public sealed class CirclePhysicsManager : MonoBehaviour
         for (int i = 0; i < cellNumber; i++)
         {
             cells[i] = new List<CircleCollider>(9);
+            toRemoves[i] = new List<int>(5);
+            toAdds[i] = new ConcurrentBag<CircleCollider>();
         }
 
         //calculate cell borders
@@ -133,6 +139,8 @@ public sealed class CirclePhysicsManager : MonoBehaviour
                 cellMinimums[(y * cellGridSize) + x] = new Vector3(halfGridUnitSize - ((gridUnitSize - ((x - 1) * (cellUnitSize))) + cellOverlap), halfGridUnitSize - ((gridUnitSize - ((y - 1) * (cellUnitSize))) + cellOverlap));
             }
         }
+
+
 
     }
 
@@ -170,6 +178,14 @@ public sealed class CirclePhysicsManager : MonoBehaviour
         {
             AssignCells(colliders[i]);
         }
+
+        Parallel.For(0, cellNumberMinOne, (int i) =>
+        {
+            while (toAdds[i].TryTake(out temporaryToAdds[i]))
+            {
+                cells[i].Add(temporaryToAdds[i]);
+            }
+        });
 
         //make copies of all lists in cells array to use them when game resets
         for (int i = 0; i < cellNumber; i++)
@@ -212,38 +228,85 @@ public sealed class CirclePhysicsManager : MonoBehaviour
         #endregion
 
         #region update cells
-        UnityEngine.Profiling.Profiler.BeginSample("cells");
+        //UnityEngine.Profiling.Profiler.BeginSample("cells+collide");
 
+        // TO DO: see if adding locks decreased performance significanlty and then see if joining cells and collide loops can speed things up
+        #region old parallel
+        /*   
+           playerCells.Clear();
+           Parallel.For(0, cellNumberMinOne, (int i) =>
+           {
+               if (cells[i].Count > 0)
+               {
+                   toRemoves[i].Clear();
+                   for (int j = 0; j < cells[i].Count; j++)
+                   {
+                       lock (cells[i])
+                       {
+                           if (cells[i][j].isPlayer)
+                           {
+                               lock (playerCells) playerCells.Add(i);
+                           }
+                       }
+
+                       if (!IsInCell(i, cells[i][j]))
+                       {
+                           AssignCells(cells[i][j], i);
+                           toRemoves[i].Add(j);
+                       }
+                   }
+                   if (toRemoves[i].Count > 0)
+                   {
+                       for (int j = toRemoves[i].Count - 1; j >= 0; j--)
+                       {
+                           lock(cells[i])cells[i].RemoveAt(toRemoves[i][j]);
+                       }
+                   }
+               }
+           });
+           */
+        // UnityEngine.Profiling.Profiler.EndSample();
+        #endregion
+
+        UnityEngine.Profiling.Profiler.BeginSample("cells");
         playerCells.Clear();
-        //check which colliders left their cells, remove them from those cell's lists and assign them to their current cells
-        for (int i = 0; i < cellNumber; i++)
+        Parallel.For(0, cellNumberMinOne, (int i) =>
         {
             if (cells[i].Count > 0)
             {
-                toRemove.Clear();
+                toRemoves[i].Clear();
                 for (int j = 0; j < cells[i].Count; j++)
                 {
                     if (cells[i][j].isPlayer)
                     {
-                        playerCells.Add(i);
+                        lock (playerCells) playerCells.Add(i);
                     }
+
                     if (!IsInCell(i, cells[i][j]))
                     {
                         AssignCells(cells[i][j], i);
-                        toRemove.Add(j);
+                        toRemoves[i].Add(j);
                     }
                 }
-                if (toRemove.Count > 0)
+                if (toRemoves[i].Count > 0)
                 {
-                    for (int j = toRemove.Count - 1; j >= 0; j--)
+                    for (int j = toRemoves[i].Count - 1; j >= 0; j--)
                     {
-                        cells[i].RemoveAt(toRemove[j]);
+                        cells[i].RemoveAt(toRemoves[i][j]);
                     }
                 }
             }
-        }
-        UnityEngine.Profiling.Profiler.EndSample();
+        });
 
+        Parallel.For(0, cellNumberMinOne, (int i) =>
+        {
+            while (toAdds[i].TryTake(out temporaryToAdds[i]))
+            {
+                if(!cells[i].Contains(temporaryToAdds[i])) cells[i].Add(temporaryToAdds[i]);
+            }
+        });
+
+        UnityEngine.Profiling.Profiler.EndSample();
         #endregion
 
         #region check for collisions
@@ -261,7 +324,7 @@ public sealed class CirclePhysicsManager : MonoBehaviour
                 if (cells[cellId].Count < 2) { return; }
 
                 Vector3 distanceVector;
-                
+
                 for (int i = 0; i < cells[cellId].Count; i++)
                 {
                     if (!cells[cellId][i].detect) { continue; }
@@ -489,10 +552,12 @@ public sealed class CirclePhysicsManager : MonoBehaviour
                 if (IsInCell(previousCell + ((y * cellGridSize) + x), collider))
                 {
 
-                    if (!cells[(previousCell + ((y * cellGridSize) + x))].Contains(collider))
-                    {
-                        cells[(previousCell + ((y * cellGridSize) + x))].Add(collider);
-                    }
+                    //old parallel
+                    //if (!cells[(previousCell + ((y * cellGridSize) + x))].Contains(collider))
+                    //{
+                    //    lock (cells[(previousCell + ((y * cellGridSize) + x))]) cells[(previousCell + ((y * cellGridSize) + x))].Add(collider);
+                    //}
+                    toAdds[(previousCell + ((y * cellGridSize) + x))].Add(collider);
                 }
             }
         }

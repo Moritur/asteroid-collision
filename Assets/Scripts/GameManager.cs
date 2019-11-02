@@ -18,16 +18,14 @@ public sealed class GameManager : MonoBehaviour
     int score;
     public int Score
     {
-        get { return score; }
-        private set
-        {
-            score = value;
-            scoreTextField.text = scoreText + score;
-        }
+        get => score;
+        private set => score = value;
     }
 
     //used to reset positions of all objects without reloading scene
     public event System.Action RestartGame;
+
+    void Update() => scoreTextField.text = scoreText + score;
 
     void Awake()
     {

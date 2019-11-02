@@ -1,4 +1,5 @@
 ﻿using System.Collections;
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Events;
@@ -6,7 +7,7 @@ using UnityEngine.Events;
 public class CircleCollider
 {
 
-    public UnityEvent OnCollision;
+    public event Action OnCollision;
     public bool isAsteroid;
     public bool detect = true;
     public bool isPlayer;
@@ -17,16 +18,17 @@ public class CircleCollider
     [HideInInspector]
     public Vector3 position
     {
-        get {
-            if (isAsteroid && !isPlayer)
-            {
-                return currentPosition;
-            }
-            else
-            {
-                return transform.position;
-            }
-            }
+        //get {
+        //    if (isAsteroid && !isPlayer)
+        //    {
+        //        return currentPosition;
+        //    }
+        //    else
+        //    {
+        //        return transform.position;
+        //    }
+        //    }
+        get => currentPosition;
         set
         {
             if (isAsteroid && !isPlayer)
@@ -40,24 +42,26 @@ public class CircleCollider
         }
     }
 
+    public void Collide() => OnCollision();
+
+    public void CachePosition() => currentPosition = transform.position;
+
     //for asteroids
     public CircleCollider(Vector3 position)
     {
         isAsteroid = true;
         isPlayer = false;
-        OnCollision = new UnityEvent();
-        OnCollision.AddListener(AsteroidCollision);
+        OnCollision += AsteroidCollision;
         this.position = position;
         CirclePhysicsManager.singleton.AddCircleCollider(this);
     }
 
     //for bullets and player
-    public CircleCollider(UnityAction action, bool isPlayer, Transform transform)
+    public CircleCollider(Action action, bool isPlayer, Transform transform)
     {
         isAsteroid = isPlayer;
         this.isPlayer = isPlayer;
-        OnCollision = new UnityEvent();
-        OnCollision.AddListener(action);
+        OnCollision += action;
         this.transform = transform;
         CirclePhysicsManager.singleton.AddCircleCollider(this);
     }

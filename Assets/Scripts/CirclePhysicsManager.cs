@@ -230,43 +230,7 @@ public sealed class CirclePhysicsManager : MonoBehaviour
         #region update cells
         //UnityEngine.Profiling.Profiler.BeginSample("cells+collide");
 
-        // TO DO: see if adding locks decreased performance significanlty and then see if joining cells and collide loops can speed things up
-        #region old parallel
-        /*   
-           playerCells.Clear();
-           Parallel.For(0, cellNumberMinOne, (int i) =>
-           {
-               if (cells[i].Count > 0)
-               {
-                   toRemoves[i].Clear();
-                   for (int j = 0; j < cells[i].Count; j++)
-                   {
-                       lock (cells[i])
-                       {
-                           if (cells[i][j].isPlayer)
-                           {
-                               lock (playerCells) playerCells.Add(i);
-                           }
-                       }
-
-                       if (!IsInCell(i, cells[i][j]))
-                       {
-                           AssignCells(cells[i][j], i);
-                           toRemoves[i].Add(j);
-                       }
-                   }
-                   if (toRemoves[i].Count > 0)
-                   {
-                       for (int j = toRemoves[i].Count - 1; j >= 0; j--)
-                       {
-                           lock(cells[i])cells[i].RemoveAt(toRemoves[i][j]);
-                       }
-                   }
-               }
-           });
-           */
-        // UnityEngine.Profiling.Profiler.EndSample();
-        #endregion
+        // TO DO: see if joining cells and collide loops can speed things up
 
         UnityEngine.Profiling.Profiler.BeginSample("cells");
         playerCells.Clear();
@@ -318,7 +282,6 @@ public sealed class CirclePhysicsManager : MonoBehaviour
         {
             // TO DO: Benchmark single (current implementation) vs multiple cells per Paralell.For iteration
 
-            //for (int cellId = 0; cellId < cellNumber; cellId++)
             Parallel.For(0, cellNumberMinOne, (int cellId) =>
             {
                 if (cells[cellId].Count < 2) { return; }

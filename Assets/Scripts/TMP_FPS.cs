@@ -4,13 +4,17 @@ using UnityEngine;
 
 public sealed class TMP_FPS : MonoBehaviour
 {
-    float deltaTime = 0.0f;
+    float deltaTime = 0f;
     int usedHeight = (Screen.height * 2) / 100;
     GUIStyle style;
     Rect rect;
     float msec;
     float fps;
     string text;
+
+    const int framesToIgnore = 100;
+    int ignoredFrames = 0;
+    float deltaTimeSum = 0f;
 
     void Awake()
     {
@@ -21,15 +25,19 @@ public sealed class TMP_FPS : MonoBehaviour
         style.normal.textColor = new Color(0.0f, 0.0f, 0.5f, 1.0f);
     }
 
-    const int framesToIgnore = 100;
-    int ignoredFrames = 0;
+
     void Update()
     {
-        ignoredFrames++;
-        if (ignoredFrames < framesToIgnore) return;
+        if (ignoredFrames < framesToIgnore)
+        {
+            ignoredFrames++;
+            deltaTimeSum += Time.unscaledDeltaTime;
+            return;
+        }
 
+        deltaTime = deltaTimeSum / ignoredFrames;
         ignoredFrames = 0;
-        deltaTime = Time.unscaledDeltaTime;
+        deltaTimeSum = 0f;
     }
 
     void OnGUI()
